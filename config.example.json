@@ -1,0 +1,387 @@
+{
+  "host": "",
+  "state_dir": "/var/lib/security-watch",
+  "dedup_window": "10m",
+  "dedup_ignore_subject": [
+    "access",
+    "trap",
+    "mirror"
+  ],
+  "sinks": {
+    "file": "/var/log/security-watch/events.jsonl",
+    "webhook": {
+      "enabled": false,
+      "url": "https://example.com/api/security-events",
+      "headers": {
+        "X-Watch-Token": "replace-me"
+      },
+      "timeout": "10s"
+    },
+    "email": {
+      "enabled": false,
+      "host": "smtp.example.com",
+      "port": 587,
+      "user": "",
+      "pass": "",
+      "from": "watch@example.com",
+      "to": [
+        "admin@example.com"
+      ],
+      "min_severity": "alert",
+      "throttle": "15m"
+    },
+    "telegram": {
+      "enabled": false,
+      "token": "bot token",
+      "chat_id": "chat id",
+      "min_severity": "warn",
+      "timeout": "10s"
+    },
+    "outbox_max": 5000,
+    "outbox_retry": "1m",
+    "file_max_mb": 50,
+    "file_keep": 7
+  },
+  "access_log": {
+    "enabled": true,
+    "path": "/var/log/nginx/access.log",
+    "not_found_per_minute": 20,
+    "denied_per_minute": 10,
+    "requests_per_minute": 86,
+    "suspicious_paths": [
+      "/.env",
+      "/.git",
+      "/wp-login.php",
+      "/wp-admin",
+      "/phpmyadmin",
+      "/vendor/phpunit",
+      "/actuator",
+      "/config.json",
+      "/.aws"
+    ],
+    "errors_per_minute": 5,
+    "detect_injection": true,
+    "honeypot_paths": [
+      "/wp-login.php",
+      "/wp-admin",
+      "/phpmyadmin",
+      "/.env",
+      "/.git/config"
+    ],
+    "extra_fields": [
+      "ja3",
+      "cf_ip"
+    ],
+    "real_ip_field": "cf_ip",
+    "regexp": "",
+    "extra_injection_patterns": [
+      {
+        "kind": "custom_backdoor",
+        "pattern": "/cgi-bin/\\\\w+\\\\.cgi\\\\?cmd=",
+        "severity": "alert"
+      }
+    ],
+    "disabled_signatures": []
+  },
+  "auth_log": {
+    "enabled": true,
+    "path": "/var/log/auth.log",
+    "failures_per_minute": 5,
+    "known_ips": [],
+    "extra_failure_patterns": []
+  },
+  "files": {
+    "enabled": true,
+    "paths": [
+      "/etc/nginx",
+      "/etc/systemd/system",
+      "/root/.ssh",
+      "/etc/cron.d"
+    ],
+    "interval": "5m",
+    "max_depth": 6,
+    "skip": [
+      "node_modules",
+      "/tmp/",
+      ".git/"
+    ]
+  },
+  "ports": {
+    "enabled": true,
+    "interval": "1m",
+    "expected": [
+      22,
+      80,
+      443
+    ]
+  },
+  "app_log": {
+    "enabled": true,
+    "path": "/var/log/myapp/app.log",
+    "extra_patterns": [
+      "attack_tracker",
+      "guardPrivilegedFields",
+      "mass_assignment"
+    ],
+    "disable_builtin_patterns": false,
+    "detect_injection": true
+  },
+  "canary": {
+    "enabled": true,
+    "tokens": [
+      "CANARY_REPLACE_WITH_YOUR_OWN_VALUE"
+    ]
+  },
+  "enrich": {
+    "enabled": true,
+    "reverse_dns": true,
+    "rdap": true,
+    "tor_list_url": "https://check.torproject.org/torbulkexitlist",
+    "timeout": "5s",
+    "cache_ttl": "12h"
+  },
+  "processes": {
+    "enabled": true,
+    "interval": "1m",
+    "suspicious_dirs": [
+      "/tmp",
+      "/dev/shm",
+      "/var/tmp",
+      "/run/user"
+    ],
+    "allowed_outbound_ports": [
+      53,
+      80,
+      443,
+      587,
+      3306,
+      25
+    ]
+  },
+  "db": {
+    "enabled": false,
+    "dsn": "user:password@tcp(127.0.0.1:3306)/mydb?parseTime=true",
+    "interval": "5m",
+    "checks": [
+      {
+        "name": "registrations per hour",
+        "query": "SELECT COUNT(*) FROM users WHERE email_verification_sent_at >= NOW() - INTERVAL 1 HOUR",
+        "threshold": 10,
+        "severity": "warn",
+        "description": "A spike in registrations is a sign of a bot flood"
+      },
+      {
+        "name": "role changes per day",
+        "query": "SELECT COUNT(*) FROM journals WHERE description LIKE '%role_id%' AND created_at >= NOW() - INTERVAL 1 DAY",
+        "threshold": 0,
+        "severity": "alert",
+        "description": "Every role change must have an explanation"
+      },
+      {
+        "name": "large refunds per day",
+        "query": "SELECT COUNT(*) FROM balance_operations WHERE operation = 'refund' AND amount > 100 AND created_at >= NOW() - INTERVAL 1 DAY",
+        "threshold": 0,
+        "severity": "alert",
+        "description": "A refund larger than a hundred is worth a manual look"
+      },
+      {
+        "name": "new API tokens per hour",
+        "query": "SELECT COUNT(*) FROM auth_access_tokens WHERE created_at >= NOW() - INTERVAL 1 HOUR",
+        "threshold": 3,
+        "severity": "warn",
+        "description": "Many new access keys in a row"
+      }
+    ],
+    "column_watches": [
+      {
+        "name": "user roles",
+        "table": "users",
+        "key": "id",
+        "columns": [
+          "role_id"
+        ],
+        "where": "role_id <= 2",
+        "severity": "alert",
+        "max_rows": 5000
+      },
+      {
+        "name": "api client keys",
+        "table": "api_clients",
+        "key": "id",
+        "columns": [
+          "api_key_hash",
+          "status_id"
+        ],
+        "where": "",
+        "severity": "alert",
+        "max_rows": 1000
+      },
+      {
+        "name": "system settings",
+        "table": "manager_settings",
+        "key": "key",
+        "columns": [
+          "value"
+        ],
+        "where": "",
+        "severity": "warn",
+        "max_rows": 500
+      }
+    ],
+    "driver": "mysql"
+  },
+  "files_realtime": true,
+  "self_guard": {
+    "enabled": true,
+    "heartbeat_interval": "15m",
+    "check_interval": "1m",
+    "watch_paths": [
+      "/etc/systemd/system/security-watch.service"
+    ]
+  },
+  "audit": {
+    "enabled": false,
+    "path": "/var/log/audit/audit.log",
+    "exec_keys": [
+      "sw_exec"
+    ],
+    "canary_keys": [
+      "sw_canary"
+    ]
+  },
+  "mirror": {
+    "enabled": false,
+    "addr": "127.0.0.1:9777",
+    "max_body_bytes": 65536,
+    "privileged_fields": [
+      "role_id",
+      "is_admin",
+      "is_banned",
+      "is_verified",
+      "balance",
+      "status_id",
+      "user_id",
+      "parent_id",
+      "price",
+      "discount",
+      "traffic_limit",
+      "api_key_hash"
+    ],
+    "allow_paths": [
+      "/dashboard/",
+      "/service/",
+      "/admin/"
+    ]
+  },
+  "ignore": [
+    {
+      "source": "access",
+      "kind": "path_scan",
+      "ip": "10.0.0.7",
+      "subject_contains": ""
+    }
+  ],
+  "severity_overrides": {
+    "ssh_login": "warn"
+  },
+  "trap": {
+    "enabled": false,
+    "addr": "127.0.0.1:9778",
+    "paths": [
+      "/.env.bak",
+      "/.env.old",
+      "/backup.sql",
+      "/admin-old/",
+      "/config.bak.json",
+      "/.git/config.bak"
+    ],
+    "serve_bait": true,
+    "bait_template": "APP_ENV=production\nAPP_DEBUG=false\nDB_HOST=127.0.0.1\nDB_USER=app\nDB_PASSWORD=%s\nAPI_KEY=%s\n"
+  },
+  "blocking": {
+    "enabled": false,
+    "command": "ufw deny from %s",
+    "unblock_command": "ufw delete deny from %s",
+    "propose_on": [
+      "trap_hit",
+      "canary_used",
+      "canary_file_read",
+      "mass_assignment_attempt",
+      "sqli_union",
+      "sqli_tautology",
+      "sqli_sleep",
+      "path_traversal",
+      "shell_injection"
+    ],
+    "auto": {
+      "enabled": false,
+      "min_hits": 3,
+      "min_reasons": 2,
+      "require_kinds": [
+        "trap_hit"
+      ],
+      "allowlist": [
+        "127.0.0.1"
+      ],
+      "max_per_hour": 10,
+      "dry_run": true
+    }
+  },
+  "actors": {
+    "enabled": true,
+    "weights": {
+      "trap_hit": 20,
+      "canary_used": 40,
+      "canary_file_read": 40,
+      "mass_assignment_attempt": 20,
+      "sqli_union": 15,
+      "sqli_tautology": 15,
+      "sqli_sleep": 15,
+      "path_traversal": 15,
+      "shell_injection": 20,
+      "honeypot_hit": 10,
+      "path_scan": 5,
+      "access_denied_burst": 5,
+      "request_flood": 5,
+      "ssh_bruteforce": 10,
+      "server_error_burst": 5
+    },
+    "alert_score": 50,
+    "digest_interval": "1h",
+    "forget": "168h"
+  },
+  "baseline": {
+    "enabled": true,
+    "learn_days": 14,
+    "features": [
+      "country",
+      "owner",
+      "agent",
+      "tls_fingerprint"
+    ],
+    "kinds": [
+      "ssh_login",
+      "trap_hit",
+      "mass_assignment_attempt",
+      "canary_used"
+    ],
+    "severity": "warn"
+  },
+  "archive": {
+    "enabled": false,
+    "command": "rsync -az %s backup@another-server:/archive/security-watch/",
+    "interval": "24h"
+  },
+  "logging": {
+    "format": "text",
+    "level": "info"
+  },
+  "actions": {
+    "enabled": false,
+    "commands": {
+      "revoke-tokens": "mysql -u app -ppassword mydb -e \"DELETE FROM auth_access_tokens WHERE tokenable_id = %s\"",
+      "ban-user": "mysql -u app -ppassword mydb -e \"UPDATE users SET is_banned = 1 WHERE id = %s\"",
+      "rotate-api-key": "curl -s -X POST http://127.0.0.1:8080/internal/rotate-key/%s"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+# Built binaries
+/security-watch
+*.exe
+
+# Runtime data of the service: event log, state files, queues. They hold
+# addresses, dossiers and other details of a particular server.
+events.jsonl*
+*.state.json
+outbox.*.jsonl
+dossier.json
+actors.json
+baseline.json
+block_candidates.json
+
+# A real configuration: it holds database credentials and mail passwords.
+/config.json
+
+# Go
+*.test
+*.out
+coverage.out
+vendor/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

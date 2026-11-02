@@ -1,0 +1,33 @@
+[Unit]
+Description=security-watch - server monitoring (logs, files, ports)
+Documentation=file:/opt/security-watch/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/security-watch/security-watch -config /etc/security-watch/config.json
+Restart=always
+RestartSec=5
+
+# The service only reads: it needs neither the right to change the system
+# nor any new privileges.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# Writing is allowed only to its own state and its own event log.
+ReadWritePaths=/var/lib/security-watch /var/log/security-watch
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=security-watch
+
+[Install]
+WantedBy=multi-user.target

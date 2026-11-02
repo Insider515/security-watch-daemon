@@ -1,0 +1,40 @@
+# security-watch
+
+> A single-binary monitoring service for Linux servers. It reads logs, watches files, ports, processes and the database, and reports what it notices to a file, Telegram, an HTTP receiver or email. By default it changes nothing in the system and blocks nobody.
+
+Written in Go with two external dependencies (the MySQL and PostgreSQL drivers); everything else is the standard library. Configured by one JSON file with 26 sections, installed as a systemd service, and shipped as a 7.8 MB executable that uses about 14 MB of memory. There is no tie to any application: log paths, thresholds, watched files, database queries, privileged field names and suppression rules all come from the configuration.
+
+What sets it apart from fail2ban and CrowdSec: it never blocks on its own decision (blocking is a separate operator command, and self-directed blocking is off by default and gated by conditions); every event carries a sequence number and the hash of the previous one, so cutting or editing a record is detectable with `-verify`; a trap serves each visitor a unique fake key, and a later login attempt with that key proves the link; the nginx `mirror` directive lets it inspect POST bodies and headers, where the web server log shows nothing.
+
+Emits 64 event kinds across 12 sources (web server log, auth log, application log, files with inotify, ports, processes, database columns, auditd, request mirror, trap, canary tokens, the service itself) with three severities. Provides 14 command-line flags, including `-check` (validate the configuration), `-once` (single pass), `-tune` (derive thresholds from a real log), `-verify` (chain integrity), `-stats` (the service's own counters), `-candidates` and `-block` (operator-driven blocking).
+
+## Documentation
+
+- [README](https://github.com/Insider515/security-watch-daemon/blob/HEAD/README.md): the complete guide - installation, every observation source with nginx snippets, the full table of event kinds, injection signatures, sinks, the event chain, actor scoring, learning, blocking, all settings with defaults, resource measurements, known limitations
+- [README in Ukrainian](https://github.com/Insider515/security-watch-daemon/blob/HEAD/README.uk.md): the same guide in Ukrainian
+- [Specification](https://github.com/Insider515/security-watch-daemon/blob/HEAD/SPEC.md): a short technical specification - composition, sources, events, sinks, self-protection, storage layout, limitations, how the default thresholds were derived
+- [Example configuration](https://github.com/Insider515/security-watch-daemon/blob/HEAD/config.example.json): every section filled in with working values
+
+## Setup guides
+
+- [auditd rules](https://github.com/Insider515/security-watch-daemon/blob/HEAD/docs-auditd.md): the rules that let the service see program execution with full command lines and reads of a canary file, plus the cost on a busy server
+- [Client fingerprint in the nginx log](https://github.com/Insider515/security-watch-daemon/blob/HEAD/docs-nginx-ja3.md): passing the TLS fingerprint and the real client address through `log_format`, and what a fingerprint does and does not prove
+- [Trap and operator-driven blocking](https://github.com/Insider515/security-watch-daemon/blob/HEAD/docs-trap.md): what the trap collects, how the per-visitor bait key works, the nginx routing, and why self-directed blocking needs conditions
+- [Request body inspection and blocking](https://github.com/Insider515/security-watch-daemon/blob/HEAD/docs-waf-blocking.md): the nginx mirror setup, and how Coraza/ModSecurity and CrowdSec fit alongside a watcher that does not block
+
+## Deployment
+
+- [install.sh](https://github.com/Insider515/security-watch-daemon/blob/HEAD/install.sh): build, directory layout, systemd service, logrotate rule; re-running updates only the binary
+- [systemd unit](https://github.com/Insider515/security-watch-daemon/blob/HEAD/systemd/security-watch.service): hardened unit (`ProtectSystem=strict`, `NoNewPrivileges`, `MemoryDenyWriteExecute`, write access only to the state and log directories)
+- [logrotate rule](https://github.com/Insider515/security-watch-daemon/blob/HEAD/logrotate.conf): optional, since the service rotates its own event log by size
+
+## Source
+
+- [cmd/security-watch](https://github.com/Insider515/security-watch-daemon/tree/HEAD/cmd/security-watch): command-line parsing only
+- [internal/watch](https://github.com/Insider515/security-watch-daemon/tree/HEAD/internal/watch): the engine - sources, sinks, the event chain, dedup, enrichment, actors, learning, blocking, state
+
+## Optional
+
+- [Event chain and verification](https://github.com/Insider515/security-watch-daemon/blob/HEAD/README.md#the-event-chain): how tamper evidence works and why `-verify` is run on a copy of the log, off the server
+- [Protecting the service itself](https://github.com/Insider515/security-watch-daemon/blob/HEAD/README.md#protecting-the-service-itself): heartbeat, own-file checks, counters, and an explicit statement of what this does not give
+- [Known limitations](https://github.com/Insider515/security-watch-daemon/blob/HEAD/README.md#known-limitations): what is verified and what is not, including coverage figures and how long the service has actually run
