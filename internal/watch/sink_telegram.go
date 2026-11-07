@@ -212,13 +212,20 @@ func (t *TelegramSink) rollHour(now time.Time) {
 	}
 }
 
-// intrusionEvent reports whether somebody from outside is behind the event. The
-// service's own doings - a block it performed, the heartbeat, the digest - are
-// not attacks even when they matter.
+// intrusionEvent reports whether somebody from outside is behind the event.
+//
+// The service's own doings - a block it performed, the heartbeat, the digest -
+// are not attacks even when they matter. They are told apart by grade rather
+// than by source: the watcher itself reports the replacement of its own files
+// and a used bait key, and those are exactly the signs of a break-in, however
+// internal the source looks.
 func intrusionEvent(event Event) bool {
+	if gradeRank(gradeOrDerive(event)) >= gradeRank(GradeMajor) {
+		return true
+	}
 	switch event.Source {
 	case "self", "action", "actor":
-		return event.Kind == "actor_threshold" || event.Kind == "trap_hit"
+		return false
 	}
 	return true
 }
@@ -369,20 +376,50 @@ func (t *TelegramSink) post(chat, text string) error {
 	return nil
 }
 
-// gradeMark is the word that names the grade in a message. An unknown grade -
-// written into the configuration and not caught because the service was started
-// without -check - is shown as it was written rather than dropped.
+// gradeMark is how the grade appears in a message: a coloured dot and the word.
+//
+// The dot is there so that the grade is seen before the message is read - in a
+// chat where messages arrive at any hour that matters more than it looks. The
+// word stays next to it, because a dot alone means nothing to someone seeing
+// the bot for the first time, and because colour is lost wherever the text is
+// copied as plain characters.
+//
+// An unknown grade - written into the configuration and not caught because the
+// service was started without -check - is shown as it was written rather than
+// dropped.
 func gradeMark(g Grade) string {
-	if name := GradeNames[g]; name != "" {
-		return name
+	name := GradeNames[g]
+	if name == "" {
+		name = string(g)
 	}
-	return string(g)
+	return gradeColour(g) + " " + name
+}
+
+// gradeColour is the dot that shows the grade at a glance. System trouble gets
+// a colour of its own rather than a place on the red-to-yellow scale: it is a
+// different kind of trouble, not a lesser one.
+func gradeColour(g Grade) string {
+	switch g {
+	case GradeCritical:
+		return "\U0001F534" // red
+	case GradeMajor:
+		return "\U0001F7E0" // orange
+	case GradeMinor:
+		return "\U0001F7E1" // yellow
+	case GradeSystem:
+		return "\U0001F535" // blue
+	default:
+		return "\U000026AA" // white
+	}
 }
 
 // formatTelegramLine builds the readable line of one event.
 func formatTelegramLine(event Event) string {
 	grade := gradeOrDerive(event)
-	line := fmt.Sprintf("[%s] %s / %s", gradeMark(grade), event.Source, event.Kind)
+	line := gradeMark(grade) + " " + event.Kind
+	if event.Source != "" {
+		line = fmt.Sprintf("%s %s / %s", gradeMark(grade), event.Source, event.Kind)
+	}
 	if event.IP != "" {
 		line += "\naddress: " + event.IP
 		if score := event.Details["actor_score"]; score != "" {

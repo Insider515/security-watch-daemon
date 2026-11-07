@@ -349,6 +349,14 @@ interval so the service still stops on a signal within a second). Scheduled scan
 survives a service restart and sees what happened while the service was down.
 Real-time events have their own kinds with the `_realtime` suffix.
 
+A path that names a directory is watched whole, down to `max_depth`. A path that
+names a single file - `/opt/myapp/.env` above - is watched as that file alone:
+inotify can only subscribe to directories, so the service subscribes to the
+file's directory and reports nothing else inside it. That matters on a deployed
+application, where the file sits in the application's own directory: watching
+the tree around it would mean hundreds of directories and tens of thousands of
+events from every deployment. To watch the whole directory, name the directory.
+
 ### Listening ports
 
 The `ports` section. It reads `/proc/net/tcp` and `/proc/net/tcp6` directly,
@@ -957,6 +965,26 @@ What it reports:
   they become one message that names the worst event in full and counts the rest
   by kind. Nothing critical is ever held: the window and the cap are there to
   quiet the noise, not to delay a break-in.
+
+In a message the grade is shown by a coloured dot and by the word next to it:
+red for `critical`, orange for `major`, yellow for `minor`, blue for `system`
+and white for `notice`. The dot is there so that the grade is seen before the
+message is read; the word stays because colour is lost wherever the text is
+copied as plain characters.
+
+```
+security-watch geekproxy.io: 🔴 critical
+
+🔴 critical auth / ssh_login
+address: 91.200.12.7 (score 40)
+subject: root
+country: RU
+
+🟠 significant access / sqli_union
+address: 91.200.12.7 (score 40)
+subject: /api/users?id=1 UNION SELECT
+repeats: 4
+```
 
 Commands:
 

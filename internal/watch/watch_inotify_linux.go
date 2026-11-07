@@ -36,11 +36,24 @@ type RealtimeFiles struct {
 	emit  func(Event)
 	fd    int
 	paths map[int]string
+	// Names worth reporting in a directory that was subscribed to only because
+	// a single file inside it was named in the configuration. inotify watches
+	// directories, not files, so watching one file means watching its directory
+	// and sifting the events by name.
+	wanted map[int]map[string]bool
+	// Directories named in the configuration in their own right: everything
+	// inside them is reported.
+	whole map[int]bool
 }
 
 // NewRealtimeFiles creates the watcher.
 func NewRealtimeFiles(cfg FilesConfig, emit func(Event)) *RealtimeFiles {
-	return &RealtimeFiles{cfg: cfg, emit: emit, fd: -1, paths: map[int]string{}}
+	return &RealtimeFiles{
+		cfg: cfg, emit: emit, fd: -1,
+		paths:  map[int]string{},
+		wanted: map[int]map[string]bool{},
+		whole:  map[int]bool{},
+	}
 }
 
 // Run subscribes to the directories and reads events until ctx is cancelled.
@@ -114,14 +127,38 @@ func (r *RealtimeFiles) addRecursive(path string, depth int) {
 	if err != nil {
 		return
 	}
+
+	// A single file named in the configuration is watched through its own
+	// directory, because that is all inotify can subscribe to. Only that file is
+	// then reported, and the neighbouring directories are left alone: otherwise
+	// one named file - /app/.env, say - drags the whole tree beside it under
+	// watch, which on a deployed application is hundreds of directories and
+	// tens of thousands of events a day that nobody asked for.
 	if !info.IsDir() {
-		path = filepath.Dir(path)
+		directory := filepath.Dir(path)
+		watch, err := syscall.InotifyAddWatch(r.fd, directory, inotifyMask)
+		if err != nil {
+			return
+		}
+		r.paths[watch] = directory
+		if !r.whole[watch] {
+			if r.wanted[watch] == nil {
+				r.wanted[watch] = map[string]bool{}
+			}
+			r.wanted[watch][filepath.Base(path)] = true
+		}
+		return
 	}
+
 	watch, err := syscall.InotifyAddWatch(r.fd, path, inotifyMask)
 	if err != nil {
 		return
 	}
 	r.paths[watch] = path
+	// The directory was named in its own right, so the sifting by name that an
+	// earlier single file may have set up no longer applies.
+	r.whole[watch] = true
+	delete(r.wanted, watch)
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -152,6 +189,13 @@ func (r *RealtimeFiles) handleBuffer(data []byte) {
 		full := dir
 		if name != "" {
 			full = filepath.Join(dir, name)
+		}
+		// In a directory watched for the sake of one file, its neighbours are
+		// not our business. An event with no name is about the directory itself
+		// and is always reported: the file cannot survive its directory.
+		if names := r.wanted[int(raw.Wd)]; names != nil && name != "" && !names[name] {
+			offset += syscall.SizeofInotifyEvent + nameLen
+			continue
 		}
 		r.report(raw.Mask, full)
 		offset += syscall.SizeofInotifyEvent + nameLen

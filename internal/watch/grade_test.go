@@ -221,7 +221,7 @@ func TestTelegramComposeCounts(t *testing.T) {
 	if strings.Count(text, "file_added_realtime") != 1 {
 		t.Errorf("a thousand identical events must be counted, not listed: %q", text)
 	}
-	if !strings.Contains(text, "srv: critical") {
+	if !strings.Contains(text, "srv: \U0001F534 critical") {
 		t.Errorf("the header must carry the grade: %q", text)
 	}
 }
@@ -387,7 +387,7 @@ func TestTelegramQuietBatchStillShowsSomething(t *testing.T) {
 	if !strings.Contains(text, "ssh_bruteforce") || !strings.Contains(text, "path_scan") {
 		t.Errorf("a quiet batch must still show what was tried: %q", text)
 	}
-	if !strings.Contains(text, "srv: minor") {
+	if !strings.Contains(text, "srv: \U0001F7E1 minor") {
 		t.Errorf("the header must carry the grade: %q", text)
 	}
 }
@@ -442,7 +442,7 @@ func TestTelegramDerivesMissingGrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a critical event with no grade must not be held: %v", err)
 	}
-	if !strings.Contains(body().text(), "trap_hit") || !strings.Contains(body().text(), "srv: critical") {
+	if !strings.Contains(body().text(), "trap_hit") || !strings.Contains(body().text(), "srv: \U0001F534 critical") {
 		t.Errorf("the grade was not worked out from the kind: %q", body().text())
 	}
 }
@@ -600,5 +600,70 @@ func TestTelegramLineWithoutSubject(t *testing.T) {
 	}
 	if !strings.Contains(line, "load_high") || !strings.Contains(line, "system") {
 		t.Errorf("the line lost what matters: %q", line)
+	}
+}
+
+// With "attacks only" the watcher's own reports about itself must still get
+// through: the replacement of its own files and a used bait key come from the
+// source "self", and they are the plainest signs of a break-in there are.
+func TestTelegramIntrusionsOnlyKeepsSelfAlarms(t *testing.T) {
+	sink := NewTelegramSink(TelegramConfig{
+		Token: "t", ChatID: "1", MinSeverity: SevInfo,
+		MinGrade: GradeNotice, IntrusionsOnly: true,
+	}, "srv", t.TempDir())
+
+	batch := sink.wanted([]Event{
+		{Source: "self", Kind: "own_file_changed", Severity: SevAlert, Grade: GradeCritical},
+		{Source: "self", Kind: "own_file_missing", Severity: SevAlert, Grade: GradeCritical},
+		{Source: "self", Kind: "trap_hit", Severity: SevAlert, Grade: GradeCritical, IP: "1.1.1.1"},
+		{Source: "self", Kind: "heartbeat", Severity: SevInfo, Grade: GradeNotice},
+		{Source: "action", Kind: "ip_blocked", Severity: SevInfo, Grade: GradeNotice},
+	})
+
+	got := kindsOf(batch)
+	if len(batch) != 3 {
+		t.Fatalf("the watcher's own alarms were lost: %s", got)
+	}
+	for _, want := range []string{"own_file_changed", "own_file_missing", "trap_hit"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s must get through: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "heartbeat") || strings.Contains(got, "ip_blocked") {
+		t.Errorf("the service's own doings must not: %s", got)
+	}
+}
+
+// The grade is shown by a coloured dot and by the word: the dot so that it is
+// seen before the message is read, the word because colour is lost wherever the
+// text is copied as plain characters, and means nothing to someone seeing the
+// bot for the first time.
+func TestTelegramGradeShownByColourAndWord(t *testing.T) {
+	for _, item := range []struct {
+		grade  Grade
+		colour string
+		word   string
+	}{
+		{GradeCritical, "\U0001F534", "critical"},
+		{GradeMajor, "\U0001F7E0", "significant"},
+		{GradeMinor, "\U0001F7E1", "minor"},
+		{GradeSystem, "\U0001F535", "system"},
+		{GradeNotice, "\U000026AA", "warning"},
+	} {
+		line := formatTelegramLine(Event{Kind: "probe", Source: "test", Grade: item.grade})
+		if !strings.Contains(line, item.colour) {
+			t.Errorf("%s: the line has no colour: %q", item.grade, line)
+		}
+		if !strings.Contains(line, item.word) {
+			t.Errorf("%s: the line has no word: %q", item.grade, line)
+		}
+	}
+}
+
+// An event with no source does not leave a gap where the source would be.
+func TestTelegramLineWithoutSource(t *testing.T) {
+	line := formatTelegramLine(Event{Kind: "memory_low", Grade: GradeSystem})
+	if strings.Contains(line, "  ") || strings.Contains(line, " / ") {
+		t.Errorf("the line has a gap where the source would be: %q", line)
 	}
 }

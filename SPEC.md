@@ -31,7 +31,7 @@ the configuration. It installs on any Linux server.
 | Auth log | `auth_log` | SSH password guessing, successful login (an alarm from an unknown address), sudo |
 | Application log | `app_log` | database messages about a failed query parse, custom signatures, canary tokens |
 | auditd log | `audit` | program execution with the full command line, working directory, user and parent (the lines of one event are collected by their shared id), **reading** of a canary file |
-| Files | `files`, `files_realtime` | replacement (SHA-256), creation, deletion, permission changes; scheduled scanning plus a subscription to kernel events (inotify, reported within 0.3 s) |
+| Files | `files`, `files_realtime` | replacement (SHA-256), creation, deletion, permission changes; scheduled scanning plus a subscription to kernel events (inotify, reported within 0.3 s). A path naming a directory is watched whole; a path naming a single file is watched as that file alone, since inotify subscribes to directories and the tree beside the file is nobody's concern |
 | Ports | `ports` | a listening port appearing outside the expected list |
 | Processes | `processes` | a start from a temporary directory, a program with a deleted file, an outbound connection to an undeclared port |
 | Database | `db` | threshold checks with arbitrary queries; column watches on tables (what changed, from which value to which) |
