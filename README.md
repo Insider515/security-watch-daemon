@@ -67,6 +67,7 @@ Documentation in other languages: [Українська](README.uk.md).
 | nginx request mirror | injection and privileged field injection in the POST body and in headers |
 | Trap | a request to an address nothing links to |
 | Canary tokens | a fake key appearing in any watched log |
+| The machine's resources | memory, free space and free file slots on the mount points, load per processor |
 | The service itself | shutdown, replacement of its own files, heartbeat, its own counters |
 
 Beyond watching, the service can merge repeats, obtain facts about an address
@@ -88,6 +89,10 @@ an attacker a fake key and link it to a later login attempt.
   is collected, plus open registry data (RDAP, reverse DNS).
 - It is not a replacement for a WAF or an antivirus. This is a watcher, not a
   perimeter defence.
+- The bot does nothing beyond the commands listed below: it does not take
+  arbitrary text, does not run shell commands and does not change the
+  configuration. Blocking from the chat runs the same command from the
+  configuration that `-block` runs, and nothing else.
 
 ## Requirements
 
@@ -384,6 +389,47 @@ keep the other two kinds:
 "ignore": [{ "source": "process", "kind": "outbound_connection" }]
 ```
 
+### The machine's resources
+
+The `resources` section. The only watcher with nobody on the other side:
+everything else reports what somebody did to the server, this one reports that
+the server is running out of something. Such events get the `system` grade and
+are switched on apart from the reports about attacks.
+
+- `memory_low` - less than `memory_free_percent` of memory is left.
+  `MemAvailable` is taken rather than `MemFree`: the kernel gives free memory
+  away to caches, so `MemFree` on a healthy server is small at all times and a
+  report built on it would be false every hour of the day.
+- `disk_low` - less than `disk_free_percent` of space is left on one of
+  `paths`. Space available to an ordinary user is counted, not the part
+  reserved for root.
+- `inodes_low` - less than `inodes_free_percent` of file slots is left. A disk
+  with no slots left refuses to create files although the space is there, which
+  looks like an unexplained failure of everything at once.
+- `load_high` - the one-minute load average per processor is above
+  `load_per_cpu`. Per processor, because the same figure means different things
+  on a machine with two cores and on one with thirty-two.
+- `resource_recovered` - the trouble is over. Reported so that the operator
+  knows the server pulled through without having to go and look.
+
+```json
+"resources": {
+  "enabled": true,
+  "interval": "1m",
+  "memory_free_percent": 10,
+  "paths": ["/", "/var"],
+  "disk_free_percent": 10,
+  "inodes_free_percent": 10,
+  "load_per_cpu": 4,
+  "repeat": "1h"
+}
+```
+
+Trouble that has not gone away is not reported at every pass: a full disk stays
+full, and `repeat` says how long to wait before saying it again. The figures
+live in `/proc`, so this watcher works on Linux only; elsewhere the service
+runs with it idle.
+
 ### Database
 
 The `db` section. Two different kinds of checks, both described in the
@@ -585,7 +631,9 @@ ignored.
 ## Event kinds
 
 Severity: `info`, `warn` - a warning, `alert` - an alarm. Any of them can be
-overridden through `severity_overrides`.
+overridden through `severity_overrides`. Every event also carries a
+[criticality grade](#criticality-grades) - what it means for the server - which
+can be overridden through `grade_overrides`.
 
 | Source | Kind | Severity | When |
 |---|---|---|---|
@@ -640,12 +688,17 @@ overridden through `severity_overrides`.
 | action | `auto_block_proposed` | warn | the conditions were met but `dry_run` is on |
 | action | `auto_block_failed` | warn | the blocking command did not run |
 | action | `action_done` | info | an action from the `actions` section was executed |
+| resources | `memory_low` | alert | less than `memory_free_percent` of memory is left |
+| resources | `disk_low` | alert | less than `disk_free_percent` of space is left on a mount point |
+| resources | `inodes_low` | alert | less than `inodes_free_percent` of file slots is left |
+| resources | `load_high` | alert | the load per processor is above `load_per_cpu` |
+| resources | `resource_recovered` | info | the trouble is over |
 
 An event in the file looks like this:
 
 ```json
 {"at":"2026-11-01T12:22:14+01:00","source":"access","kind":"honeypot_hit","severity":"alert",
- "ip":"203.0.113.77","subject":"/.env","count":1,"host":"my-server","seq":729,
+ "grade":"minor","ip":"203.0.113.77","subject":"/.env","count":1,"host":"my-server","seq":729,
  "prev_hash":"a61312f8...","hash":"59001ca0...",
  "details":{"agent":"curl/8.5.0","method":"GET","status":"404","country":"NL","owner":"Example BV"}}
 ```
@@ -694,7 +747,12 @@ others.
   "file": "/var/log/security-watch/events.jsonl",
   "file_max_mb": 50,
   "file_keep": 7,
-  "telegram": { "enabled": true, "token": "token", "chat_id": "chat id", "min_severity": "warn" },
+  "telegram": {
+    "enabled": true, "token": "token",
+    "allowed_user_ids": ["111111111", "222222222"],
+    "min_grade": "major", "system_errors": true, "commands": true,
+    "max_per_hour": 20, "group_window": "2m"
+  },
   "email": {
     "enabled": true, "host": "smtp.example.com", "port": 587,
     "user": "watch@example.com", "pass": "password",
@@ -711,8 +769,12 @@ others.
   rotates the file itself by `file_max_mb` and keeps `file_keep` previous
   pieces, instead of relying on an external logrotate; the shipped
   `logrotate.conf` is only needed where logs are rotated uniformly.
-- **Telegram** - a message through the bot API, needing no configured mail server.
-  Messages longer than 4096 characters are truncated.
+- **Telegram** - a message through the bot API, needing no configured mail
+  server. Messages longer than 4096 characters are truncated. With no `chat_id`
+  the bot writes to the people in `allowed_user_ids` in private, which is the
+  usual case: there is then no group whose membership has to be watched. The
+  bot filters by [criticality grade](#criticality-grades) rather than by
+  severity and can take commands - see [The bot](#the-bot).
 - **Email** - SMTP through the standard library, with STARTTLS. Events pile up
   and go out in a single message no more often than `throttle`: during a flood
   that is the difference between one message and a hundred.
@@ -794,6 +856,124 @@ address              score  events last seen            what it did
 203.0.113.77          1087     471 2026-11-01 09:53:57  honeypot_hit×68, request_flood×1, suspicious_path×402
 198.51.100.82          598     193 2026-11-01 06:01:19  (BG Example-EOOD) honeypot_hit×43, path_traversal×1
 ```
+
+## Criticality grades
+
+Severity says how sure a watcher is that something happened. It does not say how
+bad it is: a changed application file is `alert` whether it was a deploy or a
+break-in. On a server that is deployed to with rsync that is thirty-five
+thousand `alert` events a day, and messages at that rate stop being read.
+
+The grade answers the other question - what the event means for the server:
+
+| grade | what it means | examples |
+|---|---|---|
+| `critical` | somebody is inside, or one step away | a trap went off, a bait key was used, application code changed, a new service is listening, a database column changed |
+| `major` | a deliberate attempt at the application, repelled or unconfirmed | an injection, a privileged field in a request, an address that crossed the score |
+| `minor` | looking around from outside | path scanning, brute force, a file added |
+| `notice` | our own doings and ordinary life | watching started, an address was blocked on request, the digest |
+| `system` | the machine's own trouble, with nobody behind it | memory ran out, the disk is full, a watcher failed |
+
+`system` is kept apart from the scale above because it is a different kind of
+trouble, not a lesser one: a full disk is not "worse than a scan" or "better
+than a break-in", and it is switched on and off on its own with
+`sinks.telegram.system_errors`.
+
+The grade of an event is raised by what has piled up from its address. At the
+`actors.alert_score` threshold reconnaissance becomes an attempt; at twice the
+threshold an attempt becomes a break-in in progress. A single repelled scan
+means nothing, the same address at fifty is working on the server on purpose,
+and the grade says so even though each separate event stays minor.
+
+Which kind gets which grade:
+
+| grade | kinds |
+|---|---|
+| `critical` | `canary_file_read`, `canary_used`, `column_changed`, `custom_backdoor`, `deleted_binary`, `file_changed`, `file_changed_realtime`, `listening_port`, `own_file_changed`, `own_file_missing`, `process_from_temp`, `row_added`, `row_removed`, `ssh_login`, `sudo`, `trap_hit` |
+| `major` | `actor_threshold`, `custom_pattern`, `custom_signature`, `mass_assignment_attempt`, `outbound_connection`, `path_traversal`, `probe`, `shell_injection`, `sqli_comment`, `sqli_file`, `sqli_schema`, `sqli_sleep`, `sqli_stacked`, `sqli_tautology`, `sqli_union`, `template_injection`, `threshold_exceeded` |
+| `minor` | `file_added`, `file_added_realtime`, `file_mode_changed`, `file_mode_changed_realtime`, `file_removed`, `file_removed_realtime`, `honeypot_hit`, `path_scan`, `port_gone`, `ssh_bruteforce`, `suspicious_path` |
+| `notice` | `action_done`, `archive_done`, `auto_block_proposed`, `digest`, `heartbeat`, `ip_auto_blocked`, `ip_blocked`, `ip_unblocked`, `resource_recovered`, `watch_started`, `watch_stopped` |
+| `system` | `archive_failed`, `auto_block_failed`, `check_failed`, `check_rejected`, `column_watch_failed`, `db_error`, `disk_low`, `inodes_low`, `load_high`, `memory_low`, `oom_kill`, `scan_error`, `service_failed` |
+
+The `first_time_<feature>` family from learning is minor. A kind the service does
+not know - one that appeared in a newer version, or one written by hand into the
+configuration - is minor when an address is behind it and system trouble when
+there is none: an event with no address comes from our own machinery rather than
+from outside.
+
+The grade of any kind can be set in the configuration - what counts as serious
+differs from server to server:
+
+```json
+"grade_overrides": {
+  "file_added_realtime": "notice",
+  "file_mode_changed_realtime": "notice"
+}
+```
+
+The grade is worked out once, by the service, and reaches every sink: it is the
+`grade` field of each event in the log and in the HTTP receiver's payload. It
+stays out of the chain hash, so event files written by earlier versions still
+verify.
+
+## The bot
+
+The Telegram sink can also take commands. The service asks Telegram for updates
+itself, so nothing has to be opened up on the server: no address reachable from
+outside, no certificate, no webhook.
+
+```json
+"telegram": {
+  "enabled": true,
+  "token": "bot token",
+  "allowed_user_ids": ["111111111", "222222222"],
+  "min_grade": "major",
+  "system_errors": true,
+  "intrusions_only": false,
+  "commands": true,
+  "max_per_hour": 20,
+  "group_window": "2m"
+}
+```
+
+Who may use it is decided by person, not by chat. Commands are answered only for
+the numeric identifiers in `allowed_user_ids`; to anyone else the bot does not
+reply at all, so the silence does not even reveal that the commands exist. With
+`chat_id` left empty the bot writes to those same people in private - then there
+is no group whose membership has to be watched either.
+
+What it reports:
+
+- `min_grade` - the lowest grade worth a message. The default is `major`:
+  reconnaissance from outside goes on around the clock and says nothing on its
+  own.
+- `system_errors` - whether to report the machine's own trouble. Separate from
+  the scale, because wanting to know about a full disk is not the same as
+  wanting to know about every scanner.
+- `intrusions_only` - leave out the service's own doings even when their grade
+  would pass.
+- `max_per_hour` and `group_window` - the cap on messages and how long same-kind
+  events are held together. A deploy touches thousands of files; held together
+  they become one message that names the worst event in full and counts the rest
+  by kind. Nothing critical is ever held: the window and the cap are there to
+  quiet the noise, not to delay a break-in.
+
+Commands:
+
+| command | what it does |
+|---|---|
+| `/status` | the service's counters, the most persistent addresses, whether silence is on |
+| `/actors` | addresses ranked by score |
+| `/candidates` | what the service proposes to block, and why |
+| `/ip ADDRESS` | everything known about an address: score, kinds, country, owner, dossier |
+| `/block ADDRESS`, `/unblock ADDRESS` | the same blocking as `-block` on the command line |
+| `/mute HOURS` | stay silent (one hour by default, a day at most); critical events still get through, and a restart does not undo the silence |
+| `/unmute` | report again |
+| `/settings` | what the bot is set to report |
+| `/help` | the list of commands |
+
+The bot works over what the service already keeps - the same actors, the same
+block list - so the chat and the command line show one and the same state.
 
 ## Learning normal behaviour
 
@@ -1017,6 +1197,9 @@ log you received.
 Control commands run and exit: watching is not started, so two copies of the
 service never read the same logs.
 
+The same actors, proposals, dossiers and blocking are available in Telegram
+without a session on the server - see [The bot](#the-bot).
+
 ## All settings
 
 One JSON file. Any section may be omitted: a disabled source does not start. The
@@ -1034,6 +1217,25 @@ as Go strings: `30s`, `5m`, `12h`, `168h`.
 | `files_realtime` | no | watch files through inotify |
 | `ignore` | - | suppression rules |
 | `severity_overrides` | - | severity correction by event kind |
+
+### `grade_overrides`
+
+| Field | Default | Meaning |
+|---|---|---|
+| `grade_overrides` | - | event kind -> `notice`, `minor`, `major`, `critical` or `system` |
+
+### `resources`
+
+| Field | Default | Meaning |
+|---|---|---|
+| `enabled` | no | |
+| `interval` | `1m` | how often to look |
+| `memory_free_percent` | 10 | report below this share of free memory |
+| `paths` | `["/"]` | mount points to watch for free space |
+| `disk_free_percent` | 10 | report below this share of free space |
+| `inodes_free_percent` | 10 | report below this share of free file slots |
+| `load_per_cpu` | 4 | report above this load per processor |
+| `repeat` | `1h` | how long before repeating a report about trouble that remains |
 
 ### `logging`
 
@@ -1067,9 +1269,17 @@ severity becomes the record level.
 | `email.min_severity` | `alert` | severity threshold |
 | `email.throttle` | `15m` | at most one message per this period |
 | `telegram.enabled` | no | |
-| `telegram.token`, `telegram.chat_id` | - | the bot and the recipient |
-| `telegram.min_severity` | empty (everything) | severity threshold |
-| `telegram.timeout` | - | how long to wait for the answer |
+| `telegram.token` | - | the bot token |
+| `telegram.chat_id` | - | the chat to write to; empty means the allowed people in private |
+| `telegram.allowed_user_ids` | - | numeric identifiers of the people who may use the bot |
+| `telegram.min_severity` | `warn` | severity threshold |
+| `telegram.min_grade` | `major` | the lowest [criticality grade](#criticality-grades) worth a message |
+| `telegram.system_errors` | no | report the machine's own trouble (memory, disk, a failed watcher) |
+| `telegram.intrusions_only` | no | leave out the service's own doings |
+| `telegram.commands` | no | take commands from the allowed people |
+| `telegram.max_per_hour` | 20 | the cap on messages per hour |
+| `telegram.group_window` | `2m` | how long same-kind events are held together |
+| `telegram.timeout` | `10s` | how long to wait for the answer |
 
 ### `access_log`
 
@@ -1223,7 +1433,7 @@ actions](#response-actions).
 |---|---|
 | `/opt/security-watch/security-watch` | the executable |
 | `/etc/security-watch/config.json` | the configuration, mode 0640 |
-| `/var/lib/security-watch/` | log read marks, snapshots of files and columns, the chain, dossiers, block proposals, the queues of undelivered events, the counters; mode 0600 |
+| `/var/lib/security-watch/` | log read marks, snapshots of files and columns, the chain, dossiers, block proposals, the queues of undelivered events, the counters, the bot's state (`bot.state.json`: the silence asked for and the last update taken); mode 0600 |
 | `/var/log/security-watch/events.jsonl` | the event log |
 | `/etc/systemd/system/security-watch.service` | the service |
 | `/etc/logrotate.d/security-watch` | event log rotation by an external logrotate |
@@ -1244,6 +1454,7 @@ services, with 2170 lines in the web server log per day:
 | Real-time watching | 469 directories under inotify |
 | Size of one event in the log | about 470 bytes |
 | The executable | 7.8 MB with `-ldflags='-s -w'`, 11.1 MB without |
+| The bot taking commands | one HTTP request per 30 s of waiting, held open by Telegram until an update arrives |
 
 ## Compatibility
 
@@ -1290,9 +1501,9 @@ are fixed and covered by tests; what is left is the honest remainder.
    waits. That is a deliberate choice: back-pressure instead of dropped events.
    Verified: a pass over 12000 changed files produces 12000 events with the
    chain intact, and takes 11 seconds instead of 1.
-3. **`internal/watch` is one package of about 6600 lines.** The internal
+3. **`internal/watch` is one package of about 8100 lines.** The internal
    dependencies are not split into separate packages.
-4. **Coverage is 76.7%** for the engine and 28.8% for the command-line wrapper.
+4. **Coverage is 80.0%** for the engine and 28.8% for the command-line wrapper.
 5. **The service has about a day of real operation** on one server. The
    thresholds come from a real log, but only running it can confirm them.
 6. **Email delivery is proven by tests, not by a letter.** The SMTP sink is
@@ -1303,3 +1514,16 @@ are fixed and covered by tests; what is left is the honest remainder.
 7. **Reading the real client address requires an nginx change.** `real_ip_field`
    only works once the address is added to `log_format`; without that the service
    sees the proxy addresses.
+8. **Watching resources works on Linux only.** The figures come from
+   `/proc/meminfo` and `/proc/loadavg`, which exist nowhere else. On other
+   systems the service runs with that watcher idle, and its reading is the one
+   part of it that tests cannot cover off Linux.
+9. **The bot cannot write to someone first.** Telegram refuses a message to a
+   person who has not started the conversation with the bot, so everyone in
+   `allowed_user_ids` has to send it `/start` once. Until then delivery to that
+   person fails and the events wait in `outbox.telegram.jsonl`.
+10. **The grade is worked out from the kind and the score, not from intent.** A
+    file changed by a deploy and a file changed by an intruder are the same event
+    to the service; it says that the code changed, not who changed it. On a
+    server deployed to with rsync that means a batch of critical events at every
+    deploy, which is why `grade_overrides` exists.

@@ -5,6 +5,7 @@ package watch
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -34,6 +35,7 @@ type Service struct {
 	files     *FilesWatcher
 	ports     *PortsWatcher
 	processes *ProcessWatcher
+	resources *ResourcesWatcher
 	db        *DBWatcher
 	mirror    *MirrorServer
 	trap      *TrapServer
@@ -85,6 +87,7 @@ func NewService(cfg *Config, configPath string) (*Service, error) {
 	service.files = NewFilesWatcher(cfg.Files, cfg.StateDir, service.emit)
 	service.ports = NewPortsWatcher(cfg.Ports, service.emit)
 	service.processes = NewProcessWatcher(cfg.Processes, service.emit)
+	service.resources = NewResourcesWatcher(cfg.Resources, service.emit)
 	service.mirror = NewMirrorServer(cfg.Mirror, canary, service.emit)
 	service.trap = NewTrapServer(cfg.Trap, service.dossier, canary, service.emit)
 
@@ -209,6 +212,18 @@ func (s *Service) handleEvent(event Event) {
 	s.actors.Observe(ready)
 	s.baseline.Observe(ready)
 
+	// The grade is worked out here, once, so that every sink - the file, the
+	// webhook, the bot - sees the same figure. It is raised by what has piled
+	// up from the address, which is why it comes after the actor store.
+	score := s.actors.ScoreOf(ready.IP)
+	ready.Grade = EscalateByScore(GradeOf(ready, s.cfg.GradeOverrides), score, s.actors.AlertScore())
+	if score > 0 {
+		if ready.Details == nil {
+			ready.Details = map[string]string{}
+		}
+		ready.Details["actor_score"] = strconv.Itoa(score)
+	}
+
 	logEvent(ready)
 	if err := s.sinks.Send([]Event{ready}); err != nil {
 		s.metrics.SinkError()
@@ -223,6 +238,9 @@ func (s *Service) ScanOnce() {
 		if err := s.files.Scan(); err != nil {
 			slog.Error("file scan", slog.Any("error", err))
 		}
+	}
+	if s.cfg.Resources.Enabled {
+		s.resources.Scan()
 	}
 	if s.cfg.Ports.Enabled {
 		s.ports.Scan()
@@ -255,6 +273,7 @@ func (s *Service) Run(ctx context.Context) {
 		s.selfGuard.Started(s.cfg.Host, s.sinks.Name())
 		s.startSelfGuard(ctx, &wg)
 	}
+	s.startBot(ctx, &wg)
 	s.sinks.RetryPending(ctx, s.cfg.Sinks.OutboxRetry.Duration)
 
 	slog.Info("watching started", slog.String("server", s.cfg.Host), slog.String("sinks", s.sinks.Name()))
@@ -313,6 +332,7 @@ func (s *Service) startScanners(ctx context.Context, wg *sync.WaitGroup) {
 		}},
 		{s.cfg.Ports.Enabled, s.cfg.Ports.Interval.Duration, s.ports.Scan},
 		{s.cfg.Processes.Enabled, s.cfg.Processes.Interval.Duration, s.processes.Scan},
+		{s.cfg.Resources.Enabled, s.cfg.Resources.Interval.Duration, s.resources.Scan},
 		{s.cfg.DB.Enabled && (len(s.cfg.DB.Checks) > 0 || len(s.cfg.DB.ColumnWatches) > 0),
 			s.cfg.DB.Interval.Duration, s.db.Scan},
 		{s.cfg.Archive.Enabled, s.cfg.Archive.Interval.Duration, func() {
@@ -415,6 +435,23 @@ func (s *Service) startSelfGuard(ctx context.Context, wg *sync.WaitGroup) {
 				s.selfGuard.Heartbeat(seq, head, s.metrics.Details())
 			}
 		}
+	}()
+}
+
+// startBot starts taking commands from the operator in Telegram. The bot works
+// over what the service already keeps - the same actors, the same block list -
+// so the chat and the command line show one and the same state.
+func (s *Service) startBot(ctx context.Context, wg *sync.WaitGroup) {
+	sink := s.sinks.Telegram()
+	if sink == nil || !s.cfg.Sinks.Telegram.Commands {
+		return
+	}
+	bot := NewBot(s.cfg.Sinks.Telegram, s.cfg.Host, sink,
+		s.actors, s.blocklist, s.dossier, s.metrics)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		bot.Run(ctx)
 	}()
 }
 

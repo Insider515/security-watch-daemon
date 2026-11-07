@@ -42,6 +42,53 @@ type Actor struct {
 	Notified    bool           `json:"notified"`
 }
 
+// Get returns what is known about one address, or nil when it is unknown. A
+// copy is returned, the kinds map included, so that the caller cannot change
+// the store's own state while events keep arriving.
+func (a *ActorStore) Get(ip string) *Actor {
+	if ip == "" {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	actor, known := a.items[ip]
+	if !known {
+		return nil
+	}
+	copied := *actor
+	copied.Kinds = make(map[string]int, len(actor.Kinds))
+	for kind, count := range actor.Kinds {
+		copied.Kinds[kind] = count
+	}
+	return &copied
+}
+
+// ScoreOf returns the score piled up for an address, or zero when the address
+// is unknown. The grade of an event is raised by it: a single repelled scan
+// means nothing, the same address at fifty is working on us on purpose.
+//
+// Separate from Get because it is called for every event: there is no reason to
+// copy the kinds map just to read one number.
+func (a *ActorStore) ScoreOf(ip string) int {
+	if ip == "" {
+		return 0
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if actor, known := a.items[ip]; known {
+		return actor.Score
+	}
+	return 0
+}
+
+// AlertScore is the score at which an address is worth reporting on its own.
+func (a *ActorStore) AlertScore() int {
+	if a.cfg.AlertScore > 0 {
+		return a.cfg.AlertScore
+	}
+	return 50
+}
+
 // ActorStore accumulates actors and keeps them across restarts.
 type ActorStore struct {
 	cfg   ActorsConfig

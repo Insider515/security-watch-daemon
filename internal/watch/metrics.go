@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -109,6 +110,35 @@ func (m *Metrics) Snapshot() metricCounts {
 // a restart.
 func (m *Metrics) Save() {
 	saveJSONState(m.statePath, m.Snapshot(), 0o640)
+}
+
+// formatMetrics renders the counters as readable lines. Used by the bot's
+// /status reply.
+func formatMetrics(counts metricCounts) string {
+	lines := []string{
+		fmt.Sprintf("events seen: %d", counts.Seen),
+		fmt.Sprintf("sent on: %d", counts.Sent),
+		fmt.Sprintf("suppressed by rules: %d", counts.Ignored),
+		fmt.Sprintf("merged as repeats: %d", counts.Merged),
+	}
+	if counts.SinkErrors > 0 {
+		lines = append(lines, fmt.Sprintf("delivery failures: %d", counts.SinkErrors))
+	}
+	if len(counts.BySource) > 0 {
+		sources := make([]string, 0, len(counts.BySource))
+		for name := range counts.BySource {
+			sources = append(sources, name)
+		}
+		sort.Slice(sources, func(i, j int) bool {
+			return counts.BySource[sources[i]] > counts.BySource[sources[j]]
+		})
+		parts := make([]string, 0, len(sources))
+		for _, name := range sources {
+			parts = append(parts, fmt.Sprintf("%s %d", name, counts.BySource[name]))
+		}
+		lines = append(lines, "by source: "+strings.Join(parts, ", "))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Details returns the counters to be attached to the heartbeat.

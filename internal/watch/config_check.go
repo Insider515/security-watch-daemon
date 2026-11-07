@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -105,14 +106,55 @@ func checkSinks(cfg *Config, report *configReport) {
 	if cfg.Sinks.Email.Enabled && len(cfg.Sinks.Email.To) == 0 {
 		report.problem("sinks.email: enabled, but no recipients are set")
 	}
-	if cfg.Sinks.Telegram.Enabled && (cfg.Sinks.Telegram.Token == "" || cfg.Sinks.Telegram.ChatID == "") {
-		report.problem("sinks.telegram: enabled, but the token or the chat is not set")
-	}
+	checkTelegram(cfg, report)
 	if cfg.Sinks.Webhook.Enabled && cfg.Sinks.Webhook.URL == "" {
 		report.problem("sinks.webhook: enabled, but no URL is set")
 	}
 	if cfg.Sinks.File == "" && !cfg.Sinks.Email.Enabled && !cfg.Sinks.Telegram.Enabled && !cfg.Sinks.Webhook.Enabled {
 		report.note("no sink is enabled: events will only go to the service log")
+	}
+}
+
+// checkTelegram: the bot needs a token, somebody to write to, and a grade that
+// exists. A mistake here is quiet in a bad way - the service keeps running and
+// says nothing - so each case is reported separately.
+func checkTelegram(cfg *Config, report *configReport) {
+	telegram := cfg.Sinks.Telegram
+	if !telegram.Enabled {
+		return
+	}
+	if telegram.Token == "" {
+		report.problem("sinks.telegram: enabled, but no token is set")
+	}
+	if len(telegram.Recipients()) == 0 {
+		report.problem("sinks.telegram: nobody to write to - set chat_id or allowed_user_ids")
+	}
+	for _, id := range telegram.AllowedUserIDs {
+		if _, err := strconv.ParseInt(strings.TrimSpace(id), 10, 64); err != nil {
+			report.problem("sinks.telegram.allowed_user_ids: %q is not a numeric identifier", id)
+		}
+	}
+	switch telegram.MinGrade {
+	case "", GradeNotice, GradeMinor, GradeMajor, GradeCritical:
+	case GradeSystem:
+		report.problem("sinks.telegram.min_grade: system is not a level of the scale; " +
+			"use system_errors to switch the machine's own trouble on")
+	default:
+		report.problem("sinks.telegram.min_grade: %q is unknown; expected notice, minor, major or critical",
+			telegram.MinGrade)
+	}
+	if telegram.Commands && len(telegram.AllowedUserIDs) == 0 {
+		report.problem("sinks.telegram: commands are on, but allowed_user_ids is empty - nobody could use them")
+	}
+	if telegram.ChatID != "" && telegram.Commands && len(telegram.AllowedUserIDs) == 0 {
+		report.note("sinks.telegram: a chat is set but nobody is allowed; the bot will only write, not answer")
+	}
+	for kind, grade := range cfg.GradeOverrides {
+		switch grade {
+		case GradeNotice, GradeMinor, GradeMajor, GradeCritical, GradeSystem:
+		default:
+			report.problem("grade_overrides[%q]: %q is unknown", kind, grade)
+		}
 	}
 }
 

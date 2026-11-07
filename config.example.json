@@ -33,8 +33,15 @@
     "telegram": {
       "enabled": false,
       "token": "bot token",
-      "chat_id": "chat id",
+      "chat_id": "",
+      "allowed_user_ids": ["111111111", "222222222"],
       "min_severity": "warn",
+      "min_grade": "major",
+      "system_errors": true,
+      "intrusions_only": false,
+      "commands": true,
+      "max_per_hour": 20,
+      "group_window": "2m",
       "timeout": "10s"
     },
     "outbox_max": 5000,
@@ -139,6 +146,16 @@
     "tor_list_url": "https://check.torproject.org/torbulkexitlist",
     "timeout": "5s",
     "cache_ttl": "12h"
+  },
+  "resources": {
+    "enabled": true,
+    "interval": "1m",
+    "memory_free_percent": 10,
+    "paths": ["/", "/var"],
+    "disk_free_percent": 10,
+    "inodes_free_percent": 10,
+    "load_per_cpu": 4,
+    "repeat": "1h"
   },
   "processes": {
     "enabled": true,
@@ -283,6 +300,10 @@
   ],
   "severity_overrides": {
     "ssh_login": "warn"
+  },
+  "grade_overrides": {
+    "file_added_realtime": "notice",
+    "file_mode_changed_realtime": "notice"
   },
   "trap": {
     "enabled": false,

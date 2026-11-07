@@ -59,7 +59,7 @@ func TestTelegramSink(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sink := NewTelegramSink(TelegramConfig{Token: "token", ChatID: "42", MinSeverity: SevWarn}, "srv")
+	sink := NewTelegramSink(TelegramConfig{Token: "token", ChatID: "42", MinSeverity: SevWarn}, "srv", t.TempDir())
 	sink.apiBase = server.URL
 
 	err := sink.Send([]Event{

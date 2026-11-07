@@ -24,14 +24,18 @@ const (
 // that a dashboard page and the emails do not have to parse each source its own
 // way.
 type Event struct {
-	At       time.Time         `json:"at"`
-	Source   string            `json:"source"` // nginx, auth, files, db
-	Kind     string            `json:"kind"`   // path_scan, ssh_failed, ...
-	Severity Severity          `json:"severity"`
-	IP       string            `json:"ip"`      // the real address, when known
-	Subject  string            `json:"subject"` // path, user name, file
-	Count    int               `json:"count"`   // how many times within the window
-	Details  map[string]string `json:"details"` // everything else, unparsed
+	At       time.Time `json:"at"`
+	Source   string    `json:"source"` // nginx, auth, files, db
+	Kind     string    `json:"kind"`   // path_scan, ssh_failed, ...
+	Severity Severity  `json:"severity"`
+	// How bad this is for the server, as opposed to how sure the watcher is.
+	// Filled in by the service once the event is enriched; it stays out of the
+	// chain hash, so older event files still verify.
+	Grade   Grade             `json:"grade,omitempty"`
+	IP      string            `json:"ip"`      // the real address, when known
+	Subject string            `json:"subject"` // path, user name, file
+	Count   int               `json:"count"`   // how many times within the window
+	Details map[string]string `json:"details"` // everything else, unparsed
 
 	// Sequence number and hashes form the chain that shows whether something was
 	// cut out of the log or replaced (see chain.go).

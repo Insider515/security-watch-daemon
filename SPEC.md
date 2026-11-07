@@ -43,16 +43,26 @@ the configuration. It installs on any Linux server.
 
 | | Setting | What it does |
 |---|---|---|
+| Resources | `resources` | the machine's own trouble: memory, free space and free file slots on the mount points, load per processor. The only source with nobody on the other side, so its events get the `system` grade and are switched on apart from the reports about attacks |
 | Actors | `actors` | groups events by whoever caused them: a score from per-kind weights, one report when the threshold is crossed instead of a stream, a periodic "who did what" digest |
 | Learning | `baseline` | spends the configured number of days silently remembering what is normal (countries, clients, fingerprints), then reports a value that was not there before |
 
 ## 4. Events
 
-One record shape: time, source, kind, severity (`info`/`warn`/`alert`), address,
-subject, repeat count, details, **the sequence number and the hash of the
-previous event**.
+One record shape: time, source, kind, severity (`info`/`warn`/`alert`),
+**criticality grade**, address, subject, repeat count, details, **the sequence
+number and the hash of the previous event**.
 
-There are 64 event kinds, plus the `first_time_<feature>` family from learning.
+Severity says how sure the watcher is; the grade says what the event means for
+the server: `notice` (our own doings), `minor` (looking around from outside),
+`major` (a deliberate attempt at the application), `critical` (somebody is
+inside) and `system`, kept apart from the scale for the machine's own trouble.
+The grade is worked out once by the service, reaches every sink, is raised by the
+score piled up from the address, can be overridden per kind through
+`grade_overrides`, and stays out of the chain hash, so earlier event files still
+verify.
+
+There are 69 event kinds, plus the `first_time_<feature>` family from learning.
 Among them: `path_scan`, `access_denied_burst`, `request_flood`,
 `server_error_burst`, `suspicious_path`, `honeypot_hit`, `trap_hit`,
 `canary_used`, `canary_file_read`, `sqli_union`, `sqli_tautology`, `sqli_sleep`,
@@ -85,6 +95,15 @@ Telegram; email over SMTP. All network sinks, email included, are wrapped in an
 on-disk queue: when the link goes down the events are not lost and go out later.
 A failed delivery is counted in `sink_errors`; on shutdown the service sends what
 the email sink was holding back for its throttle period.
+
+The Telegram sink filters by grade rather than by severity, writes to named
+people in private when no chat is set, caps the messages per hour and holds
+same-kind events together, so that a deploy touching thousands of files becomes
+one message instead of burying a break-in. It can also take commands - the
+service asks Telegram for updates itself, so nothing is opened up on the server -
+and answers only the numeric identifiers listed in `allowed_user_ids`, with
+silence to everyone else. The commands show the same actors, proposals, dossiers
+and blocking as the command-line flags.
 
 ## 6. Protecting the watcher itself
 
@@ -169,12 +188,12 @@ status; the rest is printed as a note.
 
 ## 8. Configuration
 
-One JSON file, 26 sections: `host`, `state_dir`, `dedup_window`,
+One JSON file, 29 sections: `host`, `state_dir`, `dedup_window`,
 `dedup_ignore_subject`, `logging`,
 `sinks`, `access_log`, `auth_log`, `files`, `files_realtime`, `ports`,
-`processes`, `app_log`, `audit`, `mirror`, `trap`, `canary`, `enrich`, `db`,
-`self_guard`, `blocking`, `actors`, `baseline`, `archive`, `actions`, `ignore`,
-`severity_overrides`.
+`processes`, `resources`, `app_log`, `audit`, `mirror`, `trap`, `canary`,
+`enrich`, `db`, `self_guard`, `blocking`, `actors`, `baseline`, `archive`,
+`actions`, `ignore`, `severity_overrides`, `grade_overrides`.
 
 Among the things that can be configured: the log format through a custom
 pattern, name patterns for logs with a date in the file name, custom and

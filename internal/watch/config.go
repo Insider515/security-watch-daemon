@@ -39,6 +39,7 @@ type Config struct {
 	Audit     AuditConfig     `json:"audit"`
 	Mirror    MirrorConfig    `json:"mirror"`
 	Processes ProcessConfig   `json:"processes"`
+	Resources ResourcesConfig `json:"resources"`
 	Trap      TrapConfig      `json:"trap"`
 	Blocking  BlockingConfig  `json:"blocking"`
 	Actors    ActorsConfig    `json:"actors"`
@@ -51,6 +52,10 @@ type Config struct {
 	Ignore []IgnoreRule `json:"ignore"`
 	// Severity overrides by event kind: kind -> level.
 	SeverityOverrides map[string]Severity `json:"severity_overrides"`
+	// Grade overrides by event kind: kind -> notice, minor, major, critical or
+	// system. What counts as serious differs from server to server, and saying
+	// so should not require rebuilding the service.
+	GradeOverrides map[string]Grade `json:"grade_overrides"`
 }
 
 // IgnoreRule is a suppression rule: an event matching it is not emitted.
@@ -299,6 +304,10 @@ func (c *Config) applyDefaults() {
 		{&c.Sinks.FileKeep, 7},
 		{&c.Sinks.OutboxMax, 5000},
 		{&c.Actors.AlertScore, 50},
+		{&c.Sinks.Telegram.MaxPerHour, 20},
+		{&c.Resources.MemoryFreePercent, 10},
+		{&c.Resources.DiskFreePercent, 10},
+		{&c.Resources.InodesFreePercent, 10},
 		{&c.Baseline.LearnDays, 14},
 	} {
 		if *item.target == 0 {
@@ -323,6 +332,9 @@ func (c *Config) applyDefaults() {
 		{&c.Actors.DigestInterval, time.Hour},
 		{&c.Actors.Forget, 7 * 24 * time.Hour},
 		{&c.Archive.Interval, 24 * time.Hour},
+		{&c.Sinks.Telegram.GroupWindow, 2 * time.Minute},
+		{&c.Resources.Interval, time.Minute},
+		{&c.Resources.Repeat, time.Hour},
 	} {
 		if item.target.Duration == 0 {
 			item.target.Duration = item.value
@@ -331,6 +343,21 @@ func (c *Config) applyDefaults() {
 
 	if c.Sinks.Email.MinSeverity == "" {
 		c.Sinks.Email.MinSeverity = SevAlert
+	}
+	// The bot's default is a deliberate attempt at the application and worse.
+	// Reconnaissance from outside goes on around the clock and says nothing on
+	// its own, so it is left out unless asked for.
+	if c.Sinks.Telegram.MinGrade == "" {
+		c.Sinks.Telegram.MinGrade = GradeMajor
+	}
+	if c.Sinks.Telegram.MinSeverity == "" {
+		c.Sinks.Telegram.MinSeverity = SevWarn
+	}
+	if c.Resources.LoadPerCPU == 0 {
+		c.Resources.LoadPerCPU = 4
+	}
+	if len(c.Resources.Paths) == 0 {
+		c.Resources.Paths = []string{"/"}
 	}
 	if len(c.Self.WatchPaths) == 0 {
 		c.Self.WatchPaths = []string{"/etc/systemd/system/security-watch.service"}

@@ -41,6 +41,10 @@ type immediateSink interface {
 type MultiSink struct {
 	sinks []Sink
 	boxes []*Outbox
+	// The Telegram sink, kept apart: the bot's command side answers through the
+	// same sink, so that the chat and the configuration agree about silence and
+	// about what is worth a message.
+	telegram *TelegramSink
 }
 
 // NewMultiSink assembles the set of sinks from the configuration, skipping the
@@ -60,10 +64,12 @@ func NewMultiSink(cfg SinksConfig, host, stateDir string) *MultiSink {
 		multi.sinks = append(multi.sinks, boxed)
 		multi.boxes = append(multi.boxes, boxed)
 	}
-	if cfg.Telegram.Enabled && cfg.Telegram.Token != "" && cfg.Telegram.ChatID != "" {
-		boxed := NewOutbox(NewTelegramSink(cfg.Telegram, host), stateDir, cfg.OutboxMax)
+	if cfg.Telegram.Enabled && cfg.Telegram.Token != "" && len(cfg.Telegram.Recipients()) > 0 {
+		telegram := NewTelegramSink(cfg.Telegram, host, stateDir)
+		boxed := NewOutbox(telegram, stateDir, cfg.OutboxMax)
 		multi.sinks = append(multi.sinks, boxed)
 		multi.boxes = append(multi.boxes, boxed)
+		multi.telegram = telegram
 	}
 	if cfg.Email.Enabled && len(cfg.Email.To) > 0 {
 		boxed := NewOutbox(NewEmailSink(cfg.Email, host), stateDir, cfg.OutboxMax)
@@ -129,6 +135,9 @@ func (m *MultiSink) Name() string {
 
 // Empty reports that there are no sinks at all - a reason to warn at startup.
 func (m *MultiSink) Empty() bool { return len(m.sinks) == 0 }
+
+// Telegram returns the Telegram sink, or nil when it is switched off.
+func (m *MultiSink) Telegram() *TelegramSink { return m.telegram }
 
 // FileSink is a line-based log: one event per line as JSON. Works without the
 // network. It rotates itself by size instead of relying on an external
